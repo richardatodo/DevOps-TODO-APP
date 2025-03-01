@@ -1,0 +1,103 @@
+services:
+  traefik:
+    image: traefik:v3.3
+    command:
+      - "--api.insecure=false"
+      - "--providers.docker=true"
+      - "--providers.docker.exposedbydefault=false"
+      - "--entrypoints.web.address=:80"
+      - "--entrypoints.websecure.address=:443"
+      - "--certificatesresolvers.myresolver.acme.email=richard.atodo@gmail.com"
+      - "--certificatesresolvers.myresolver.acme.storage=/letsencrypt/acme.json"
+      - "--certificatesresolvers.myresolver.acme.httpchallenge.entrypoint=web"
+      - "--entrypoints.web.http.redirections.entrypoint.to=websecure"
+      - "--entrypoints.web.http.redirections.entrypoint.scheme=https"
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - "/var/run/docker.sock:/var/run/docker.sock:ro"
+      - "./letsencrypt:/letsencrypt"
+    networks:
+      - app-network
+
+  redis:
+    image: redis:alpine
+    networks:
+      - app-network
+
+  frontend:
+    build: ./frontend
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.frontend.rule=Host(`www.rykard.name.com`)"
+      - "traefik.http.routers.frontend.entrypoints=websecure"
+      - "traefik.http.routers.frontend.tls.certresolver=myresolver"
+      - "traefik.http.services.frontend.loadbalancer.server.port=80"
+    depends_on:
+      - auth-api
+      - todos-api
+      - users-api
+    networks:
+      - app-network
+
+  auth-api:
+    build: ./auth-api
+    environment:
+      - REDIS_URL=redis:6379
+    depends_on:
+      - redis
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.auth.rule=Host(`auth.rykard.name.com`)"
+      - "traefik.http.routers.auth.entrypoints=websecure"
+      - "traefik.http.routers.auth.tls.certresolver=myresolver"
+      - "traefik.http.services.auth.loadbalancer.server.port=8080"
+    networks:
+      - app-network
+
+  todos-api:
+    build: ./todos-api
+    environment:
+      - REDIS_URL=redis://redis:6379
+    depends_on:
+      - redis
+      - auth-api
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.todos.rule=Host(`todos.rykard.name.com`)"
+      - "traefik.http.routers.todos.entrypoints=websecure"
+      - "traefik.http.routers.todos.tls.certresolver=myresolver"
+      - "traefik.http.services.todos.loadbalancer.server.port=8081"
+    networks:
+      - app-network
+
+  users-api:
+    build: ./users-api
+    environment:
+      - SPRING_REDIS_HOST=redis
+      - SPRING_REDIS_PORT=6379
+    depends_on:
+      - redis
+      - auth-api
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.users.rule=Host(`users.rykard.name.com`)"
+      - "traefik.http.routers.users.entrypoints=websecure"
+      - "traefik.http.routers.users.tls.certresolver=myresolver"
+      - "traefik.http.services.users.loadbalancer.server.port=8082"
+    networks:
+      - app-network
+
+  log-processor:
+    build: ./log-message-processor
+    environment:
+      - REDIS_URL=redis://redis:6379
+    depends_on:
+      - redis
+    networks:
+      - app-network
+
+networks:
+  app-network:
+    driver: bridge
